@@ -1,0 +1,235 @@
+---
+title: "exercises week 2"
+format: html
+editor: visual
+---
+
+```{r}
+library("fpp3")
+library("tsibbledata")
+```
+
+### Exercise 1 : STL Decomposition
+
+Consider the last 5 years of the “Gas” time series in the tsibble aus_production . Plot the the time series and describe what you see in terms of trend and seasonality.
+
+```{r}
+gas <- tail(aus_production, 5*4) |> select(Gas)
+gas |> autoplot(Gas) + labs(y = "Petajoules")
+```
+
+Interpretation : There is a general trend à la hausse, but also a strong seasonality with the highest peak in Q3 and the lowest point in Q1.
+
+Use the classical decomposition with type = multiplicative and check whether the decomposition supports your previous interpretation.
+
+```{r}
+# Step 1: Create the STL model
+stl_model <- gas |> model(STL(Gas))
+
+# Step 2: Extract decomposition components
+decomposed_data <- components(stl_model)
+# Step 3: Plot the decomposed components
+gas |> 
+  autoplot(Gas, color ="gray") +
+  autolayer(decomposed_data, trend, color  ="red") +
+  autolayer(decomposed_data, season_adjust, color = "blue")
+  
+```
+
+```{r}
+#or in one line
+components(stl_model) |> autoplot() + xlab("Quarter")
+```
+
+Classical decomposition :
+
+It assumes fixes seasonal pattern, in contrary to STL that allow flexibility
+
+```{r}
+# Apply classical decomposition with multiplicative type
+gas_decomp <- gas |> model(classical_decomposition(Gas, type = "multiplicative"))
+
+# Extract and plot the components
+components(gas_decomp) |> autoplot()
+
+```
+
+```{r}
+sum(is.na(gas$Gas))  # Count missing values
+which(is.na(gas$Gas))  # Find row indices with missing values
+
+```
+
+```{r}
+gas |> filter(!is.finite(Gas))
+
+```
+
+### Exercise 2 : Forecast Accuracy
+
+```{r}
+recent_production <- aus_production |>
+filter(year(Quarter) >= 1992)
+beer_train <- recent_production |>
+filter(year(Quarter) <= 2007)
+```
+
+```{r}
+
+beer_fit <- beer_train |>
+model(Mean = MEAN(Beer),
+)
+
+beer_fc <- beer_fit |>
+  forecast(h = 10)  #number of next quarters
+
+# Plot forecasts
+beer_train |> 
+  autoplot(Beer) + 
+  autolayer(beer_fc, color = "red") +
+  labs(title = "Mean Model Forecast for Beer Production", y = "Megaliters") +
+  theme_minimal()
+```
+
+We simply fit a mean model and forecast the next 10 quarters:
+
+```{r}
+accuracy(beer_fc, recent_production)
+```
+
+```{r}
+# Extract actual values
+actual_values <- recent_production |> filter(year(Quarter) > 2007) |> select(Beer)
+
+# Extract forecasted values
+forecast_values <- beer_fc |> select(.mean)
+
+# Compute Forecast Errors
+errors <- actual_values$Beer - forecast_values$.mean
+
+# Compute RMSE, MAE, MAPE manually
+MAE <- mean(abs(errors))
+RMSE <- sqrt(mean(errors^2))
+MAPE <- mean(abs(errors / actual_values$Beer)) * 100
+
+# Print results
+cat("Manual Computation of Forecast Errors:\n")
+cat("MAE:", MAE, "\n")
+cat("RMSE:", RMSE, "\n")
+cat("MAPE:", MAPE, "%\n")
+
+```
+
+```{r}
+colnames(beer_fc)
+
+```
+
+### Exercise 3
+
+This exercise involves:
+
+1.  **Loading sales data (`sales.ts`)**
+
+2.  **Selecting the top 100 materials based on total sales**
+
+3.  **Decomposing each time series using STL**
+
+4.  **Calculating the Coefficient of Variation (COV)**
+
+5.  **Generating forecasts for 2020 using ETS**
+
+6.  **Computing MAPE and merging results with COV**
+
+7.  **Creating a Comet Plot (1 - MAPE vs. COV)**
+
+```{r}
+library(fpp3)  # Load forecasting package
+library(dplyr)  # For data manipulation
+library(ggplot2)  # For visualization
+
+# Load the dataset
+load("/Users/mathildekrafft/Desktop/forcasting/week 2 /Day 2 Exercises/Sales Data.rda")
+
+# Check structure
+glimpse(sales.ts)
+
+```
+
+The name of the tsibble that you loaded is sales.ts . It contains 6902 Materials with 2 years and 9 monthly of monthly sales data, grouped into forecasting groups and businesses. Create first the list of the top 100 Materials in terms of total sales:
+
+```{r}
+# Compute total sales per material
+top_100_materials <- sales.ts |>
+  group_by(Material) |>
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE)) |>
+  arrange(desc(Total_Sales)) |>
+  slice_head(n = 100)  # Select top 100
+
+# Filter only top 100 materials in sales data
+sales_top100 <- sales.ts |>
+  filter(Material %in% top_100_materials$Material)
+
+```
+
+or
+
+```{r}
+sales_Material <- sales.ts |>
+  as_tibble() |> 
+  group_by(Material) |> 
+  summarise(Sales = sum(Sales)) |> 
+  ungroup() |> 
+  arrange(desc(Sales))
+
+top.100 <- sales_Material$Material[1:100]
+```
+
+Filter these 100 materials in sales.ts. To calculate the variability of the time series, we first need to de-seasonalize and de-trend them. We can use STL() do to this. Use the function components() to extract the components.
+
+```{r}
+sales_top100.ts <- sales.ts |>  
+  filter(Material %in% top.100)
+
+sales_Material_STL <- sales_top100.ts |> 
+  model(STL(Sales ~ trend() + season(window = "periodic"),
+            robust = TRUE)) |>
+  components()
+```
+
+To calculate the variability, I recommend that you calculate the *Coefficient of Variation* (COV) of the absolute values of the “remainder” component of STL. Note that :***COV*** **= *SD*/*Mean***
+
+```{r}
+COV_Material <- sales_Material_STL |> 
+  as_tibble() |> 
+  select(Material, remainder) |> 
+  group_by(Material) |> 
+  summarise(COV = sd(abs(remainder))/ mean(abs(remainder))) |> 
+  ungroup()
+```
+
+Now you need to generate forecasts for the top 100 materials. Use the ETS() function without any restriction. Only take the data from 2018 and 2019, and create forecasts for the first 9 months of 2020. This will take several minutes.
+
+```{r}
+sales_Material_18_19 <- sales_top100.ts |> 
+  filter(year(Year_Month) < 2020)
+
+model_sales_Material_18_19 <- sales_Material_18_19 |> 
+  model(ETS = ETS(Sales)) #ETS function without any restriction
+
+forecast_sales_Material_18_19 <- model_sales_Material_18_19 |>
+  forecast(h = 9)
+
+MAPE <- forecast_sales_Material_18_19 |> accuracy(sales_top100.ts) |> 
+  select(Material, MAPE)
+
+comet <- left_join(COV_Material,
+                   MAPE)
+
+comet.subset <- comet |>
+  filter(MAPE < 100)
+
+ggplot(comet.subset, aes(x = COV, y = 1 - MAPE)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se =FALSE)
+```

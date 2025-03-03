@@ -1,0 +1,258 @@
+---
+title: "exercises week 1"
+format: html
+editor: visual
+---
+
+## Forecasting day 1 : Exercises
+
+#### Exercise 1
+
+The library tsibbledata contains several data sets, all in the tsibble format. Check out the help files of the objects gafa_stock , PBS , vic_elec and pelt . Use autoplot() to visualize some of these time series.
+
+```{r}
+library("fpp3")
+library("tsibbledata")
+```
+
+```{r}
+?gafa_stock
+```
+
+```{r}
+autoplot(gafa_stock)
+```
+
+```{r}
+goog_stock <- gafa_stock |>  filter(Symbol == "GOOG")
+goog_stock_selected <- goog_stock |>  select(Date, Open, Close)
+autoplot(goog_stock_selected, .vars = Close) +
+  labs ( x = "Time",
+         y = "Price at closing",
+         title = "Google (GOOG) Stock Closing Prices"
+         )
+```
+
+#### Exercise 2
+
+To create subsets of time series, you can use the filter() verb from the tidyverse ecosystem. Use this time series for the exercise:
+
+```{r}
+a10 <- PBS |>
+  filter(ATC2 == "A10") |>
+  select(Month, Concession, Type, Cost) |>
+  summarise(Cost = sum(Cost)) |>
+  mutate(Cost = Cost / 1e6)
+```
+
+Cut the time series at the end of 2006 and call it a10.past. Then call the rest a10.future using the code below:
+
+```{r}
+a10.past <- a10 |>
+  filter(year(Month) < 2006)
+a10.future <- a10 |>
+  filter(year(Month) >= 2006)
+```
+
+```{r}
+a10.past.tsibble <- tsibble(
+  a10.past, index = Month,
+  key = c(Cost)
+)
+
+```
+
+You can see that that a10.future has 30 observations. Therefore, create a forecast using the ETS() model with automatic model selection for the next 30 periods based on a10.past. Then calculate the accuracy scores for these 30 forecasts:
+
+```{r}
+library("forecast")
+#Convert a10.past into a time serie
+a10.past.ts <- ts(a10.past$Cost, start = c(min(year(a10.past$Month)), month(min(a10.past$Month))), frequency = 12)
+a10.past.ets <- forecast::ets(a10.past.ts)  # Auto-selects the best ETS model
+a10.forecast <- forecast::forecast(a10.past.ets, h = 30)
+a10.future.ts <- ts(a10.future$Cost, start = c(2006, 1), frequency = 12)
+accuracy_scores <- forecast::accuracy(a10.forecast, a10.future.ts)
+print(accuracy_scores)
+
+```
+
+Interpret the **MAE**: is it big or small? Create a table that shows the real costs and the forecasts, and also do this graphically.
+
+```{r}
+comparison_table <- data.frame(
+  Month = a10.future$Month,
+  Actual_Cost = a10.future$Cost,
+  Forecasted_Cost = a10.forecast$mean
+)
+print(comparison_table)
+
+```
+
+```{r}
+# Plot actual vs forecast
+autoplot(a10.past.ts) +
+  autolayer(a10.forecast, series = "Forecast", PI = FALSE) +
+  autolayer(a10.future.ts, series = "Actual Future", color = "red") +
+  ggtitle("Forecast vs Actual Costs") +
+  ylab("Cost (Millions)") +
+  xlab("Year") +
+  theme_minimal()
+
+```
+
+#### Exercise 3
+
+What happens if data are missing? Delete the data from 2000 in the a10 time series and create a chart of the time series. What do you observe? Then create a forecast model using the same code as shown in Exercise 2. What message do you get?
+
+```{r}
+#Remove data from 2000
+# Create the original a10 dataset
+a10 <- PBS |>
+  filter(ATC2 == "A10") |>
+  select(Month, Concession, Type, Cost) |>
+  summarise(Cost = sum(Cost)) |>
+  mutate(Cost = Cost / 1e6)
+
+# Remove data from the year 2000
+a10_missing <- a10 |> filter(year(Month) != 2000)
+
+```
+
+```{r}
+#Convert to Time Series & Plot Missing Data
+a10_missing.ts <- ts(a10_missing$Cost, start = c(min(year(a10_missing$Month)), month(min(a10_missing$Month))), frequency = 12)
+
+# Plot the modified time series
+autoplot(a10_missing.ts) +
+  ggtitle("A10 Cost Time Series (Year 2000 Removed)") +
+  ylab("Cost (Millions)") +
+  xlab("Year") +
+  theme_minimal()
+
+```
+
+```{r}
+a10_missing.ets <- forecast::ets(a10_missing.ts)
+
+```
+
+#### Exercise 4
+
+There is a function called fill_gaps(). Try it on the data without the year 2000 and create a plot. What is different compared with the previous plot? Use the functions count_gaps(), has_gaps() and scan_gaps() on this time series. They will give you important information about gaps. What message do you get when you try to create a model on the time series without data in 2000?
+
+```{r}
+# Convert to tsibble forma
+a10_missing_tsibble <- a10_missing |> as_tsibble(index = Month)
+# Check if the dataset has gaps
+has_gaps(a10_missing_tsibble) #returns TRUE if there are missing timestamps.
+
+# Count the number of missing periods
+count_gaps(a10_missing_tsibble) #gives the number of missing observations
+
+# Scan where the gaps are
+scan_gaps(a10_missing_tsibble) #identifies the specific missing time periods.
+
+```
+
+```{r}
+autoplot(a10_missing_tsibble, Cost) +
+  ggtitle("A10 Cost Time Series (Missing Year 2000)") +
+  ylab("Cost (Millions)") +
+  xlab("Year") +
+  theme_minimal()
+
+```
+
+In this data there is just a gap, we go from December 1999 to jan 2001
+
+```{r}
+# Fill missing values with the previous observation
+a10_filled <- a10_missing_tsibble |> fill_gaps()
+
+# Visualize the filled dataset
+autoplot(a10_filled, Cost) +
+  ggtitle("A10 Cost Time Series (Filled Gaps)") +
+  ylab("Cost (Millions)") +
+  xlab("Year") +
+  theme_minimal()
+
+```
+
+Here we have the year 2000 back, but there the cost is NA.
+
+#### Exercise 5
+
+In the moodle, you find an Excel file called “Sales Data.xlsx”. Import the data into R.
+
+```{r}
+library(readxl)
+sales <- readxl::read_xlsx("Sales Data.xlsx")
+```
+
+The data contains 68210 rows. These are monthly sales of products in an European business of a large food company. The data contain 5663 time series (materials), grouped into 52 groups and 22 businesses. The time period is from January 2018 to September 2020. The time interval is month. The data contains two numerical columns: “Sales” contains the original sales, and “Forecast” the forecast made by the business for this month at the end of the previous month.
+
+Questions:
+
+1\. Count the number of unique values per Material. What do you observe?
+
+```{r}
+# Count unique values per Material
+unique_material_counts <- sales %>%
+  summarise(unique_materials = n_distinct(Material))
+
+print(unique_material_counts)
+
+```
+
+There are 5663 Materials.
+
+2\. Convert the tibble into a tsibble. Has this tsibble gaps?
+
+```{r}
+sales <- sales |> 
+  mutate(year_month = yearmonth(Year_Month))
+
+```
+
+```{r}
+sales_tsibble <- sales |> as_tsibble(index = year_month, key = Material)
+```
+
+```{r}
+has_gaps(sales_tsibble)
+```
+
+3\. Fill the gaps with the value 0 (no sales), and ensure that every time series starts at January 2018. Hint: Use the function fill_gaps() , and the option .full = TRUE.
+
+```{r}
+sales_filled <- sales_tsibble |> 
+  fill_gaps(.full = TRUE) |> 
+  mutate(Sales = replace_na(Sales, 0))
+
+```
+
+4\. Identify the 12 materials with the highest sales total. Graph the time series.
+
+```{r}
+top_materials <- sales_filled |> 
+  group_by(Material) |> 
+  summarise(total_sales = sum(Sales)) |> 
+  arrange(desc(total_sales)) |> 
+  slice_head(n = 12)  # Get top 12 materials
+
+print(top_materials)
+
+```
+
+```{r}
+sales_filled %>%
+  filter(Material %in% top_materials$Material) %>%
+  ggplot(aes(x = year_month, y = Sales, color = Material)) +
+  geom_line() +
+  facet_wrap(~ Material, scales = "free_y") +
+  ggtitle("Top 12 Best-Selling Materials Over Time") +
+  xlab("Year-Month") +
+  ylab("Sales") +
+  theme_minimal()
+
+```
